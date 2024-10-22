@@ -5,6 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Card Puzzle Game with Levels and Curse Cards</title>
     <style>
+      /* Styles */
+      body {
+        font-family: Arial, sans-serif;
+        margin: 20px;
+        background-color: #fafafa;
+      }
+      #game {
+        max-width: 800px;
+        margin: 0 auto;
+      }
       .grid {
         display: grid;
         grid-template-columns: repeat(2, 150px);
@@ -129,12 +139,11 @@
       <div class="level-selector">
         Level:
         <select id="levelSelect">
-          <option value="1">1</option>
+          <option value="1" selected>1</option>
           <option value="2">2</option>
           <option value="3">3</option>
           <option value="4">4</option>
         </select>
-        <button id="startButton">Start Game</button>
       </div>
       <div class="score-display">
         Target Score: <span id="targetScore"></span> | Current Score:
@@ -145,6 +154,7 @@
       <div class="message" id="message"></div>
     </div>
     <script>
+      // Card definitions
       const allCards = [
         // Positive effect cards
         {
@@ -227,7 +237,10 @@
       let offsetX = 0;
       let offsetY = 0;
       let originalParent = null;
+      let selectedCards = [];
+      let selectedCurseCards = [];
 
+      // Function to create card elements
       function createCard(card) {
         const cardElement = document.createElement('div');
         cardElement.className = 'card';
@@ -258,6 +271,7 @@
         return cardElement;
       }
 
+      // Make cards draggable
       function setupDraggable(element) {
         element.addEventListener('mousedown', startDragging);
         element.addEventListener('touchstart', startDragging, {
@@ -402,12 +416,12 @@
         checkForWin();
       }
 
+      // Initialize the game
       function initializeGame() {
         const gridElement = document.getElementById('grid');
         const cardsElement = document.getElementById('cards');
         document.getElementById('message').textContent = '';
 
-        // Set default level to 1 if not selected
         let level = 1;
         const levelSelect = document.getElementById('levelSelect');
         if (levelSelect) {
@@ -460,8 +474,18 @@
         const availableCards = allCards.filter(c => !c.isCurse);
         const curseCards = allCards.filter(c => c.isCurse);
 
-        // Randomly select cards
-        const selectedCards = [];
+        // Reset selected cards
+        selectedCards = [];
+
+        // For levels above 1, include curse cards
+        if (level > 1) {
+          selectedCurseCards = curseCards.slice(0, level - 1); // Global variable
+          selectedCards.push(...selectedCurseCards);
+        } else {
+          selectedCurseCards = [];
+        }
+
+        // Randomly select other cards
         while (
           selectedCards.length < numberOfCards &&
           availableCards.length > 0
@@ -469,10 +493,6 @@
           const randomIndex = Math.floor(Math.random() * availableCards.length);
           selectedCards.push(availableCards.splice(randomIndex, 1)[0]);
         }
-
-        // Add curse cards (must be played)
-        const selectedCurseCards = curseCards.slice(0, level); // Add one curse card per level
-        selectedCards.push(...selectedCurseCards);
 
         // Initialize selected cards
         selectedCards.forEach(card => {
@@ -485,12 +505,18 @@
         });
 
         // Set target score
-        const targetScore = level * 20;
+        let targetScore;
+        if (level === 1) {
+          targetScore = 25;
+        } else {
+          targetScore = level * 20;
+        }
         document.getElementById('targetScore').textContent = targetScore;
         document.getElementById('currentScore').textContent = '0';
         updateScore();
       }
 
+      // Update card values based on effects
       function updateCardValues() {
         // Get all card IDs in the grid
         const cardsInGridIds = [];
@@ -729,6 +755,7 @@
         });
       }
 
+      // Apply curse effects
       function applyCurseEffect(curseCard, i, j, cardsInGridIds) {
         if (curseCard.id === 101) {
           // All other cards in grid decrease by 2
@@ -787,6 +814,7 @@
         }
       }
 
+      // Add explanation to card
       function addExplanation(cardId, text) {
         const cardElement = document.getElementById(`card-${cardId}`);
         let explanationElement = cardElement.querySelector('.explanation');
@@ -798,12 +826,7 @@
         explanationElement.innerHTML = text;
       }
 
-      function getAdjacentPositions(row, col) {
-        const positions = [];
-        // Function left empty since adjacent effects are removed
-        return positions;
-      }
-
+      // Calculate total score
       function calculateScore() {
         let score = 0;
         for (let i = 0; i < gridSize; i++) {
@@ -818,6 +841,7 @@
         return score;
       }
 
+      // Update score display
       function updateScore() {
         const score = calculateScore();
         const currentScoreElement = document.getElementById('currentScore');
@@ -834,21 +858,44 @@
             : '#f44336';
       }
 
+      // Check if the player has won
       function checkForWin() {
-        const curseCardsInPlay = allCards.filter(
-          c => c.isCurse && isCardInGrid(c.id)
+        const curseCardsInGrid = selectedCurseCards.filter(c =>
+          isCardInGrid(c.id)
         );
         const allCurseCardsPlaced =
-          curseCardsInPlay.length === allCards.filter(c => c.isCurse).length;
+          curseCardsInGrid.length === selectedCurseCards.length;
 
-        if (allCurseCardsPlaced) {
-          document.getElementById('message').textContent = '';
-        } else {
+        if (!allCurseCardsPlaced) {
           document.getElementById('message').textContent =
             'Place all curse cards to complete the level!';
+          return;
+        }
+
+        const cardsInGridIds = grid.flat().filter(id => id !== null);
+        const allCardsPlaced = cardsInGridIds.length === selectedCards.length;
+
+        if (!allCardsPlaced) {
+          document.getElementById('message').textContent =
+            'Place all cards to complete the level!';
+          return;
+        }
+
+        const currentScore = calculateScore();
+        const targetScore = parseInt(
+          document.getElementById('targetScore').textContent
+        );
+
+        if (currentScore >= targetScore) {
+          document.getElementById('message').textContent =
+            'Congratulations! You have completed the level!';
+        } else {
+          document.getElementById('message').textContent =
+            'Try to reach the target score!';
         }
       }
 
+      // Check if a card is in the grid
       function isCardInGrid(cardId) {
         for (let i = 0; i < gridSize; i++) {
           for (let j = 0; j < gridSize; j++) {
@@ -858,11 +905,11 @@
         return false;
       }
 
+      // Start the game automatically at level 1 and add event listener for level change
       document.addEventListener('DOMContentLoaded', () => {
-        // Remove auto-initialization
-        document
-          .getElementById('startButton')
-          .addEventListener('click', initializeGame);
+        const levelSelect = document.getElementById('levelSelect');
+        levelSelect.addEventListener('change', initializeGame);
+        initializeGame();
       });
     </script>
   </body>
