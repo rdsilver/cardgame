@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Card Puzzle Game with Levels and Curse Cards</title>
+    <style>
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, 150px);
+        gap: 10px;
+        margin-bottom: 20px;
+        padding: 10px;
+        background: #f0f0f0;
+        border-radius: 8px;
+      }
+      .cell {
+        width: 150px;
+        height: 150px;
+        border: 2px dashed #ccc;
+        border-radius: 8px;
+        background: white;
+        position: relative;
+      }
+      .cell.dragover {
+        background: #e0e0e0;
+        border: 2px dashed #666;
+      }
+      .card {
+        width: 150px;
+        height: 150px;
+        border: 2px solid #2196f3;
+        margin: 0;
+        display: inline-block;
+        position: relative;
+        background: white;
+        border-radius: 8px;
+        cursor: grab;
+        user-select: none;
+        -webkit-user-select: none;
+        touch-action: none;
+        z-index: 1;
+      }
+      .curse-card {
+        border-color: #f44336;
+      }
+      .card.dragging {
+        cursor: grabbing;
+        z-index: 1000;
+        opacity: 0.8;
+      }
+      .card-value {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        font-size: 24px;
+        font-weight: bold;
+        padding: 4px 8px;
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+      }
+      .original-value {
+        margin-left: 8px;
+        text-decoration: line-through;
+        color: #999;
+        font-size: 16px;
+      }
+      .value-increased {
+        color: #4caf50;
+      }
+      .value-decreased {
+        color: #f44336;
+      }
+      .card-effect {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        text-align: center;
+        padding: 10px;
+        font-size: 14px;
+        width: 80%;
+        pointer-events: none;
+      }
+      #cards {
+        margin-top: 20px;
+        padding: 10px;
+        background: #f0f0f0;
+        border-radius: 8px;
+        min-height: 170px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+      .score-display {
+        font-size: 20px;
+        margin: 20px 0;
+        padding: 10px;
+        background: #e8f5e9;
+        border-radius: 8px;
+      }
+      .level-selector {
+        margin-bottom: 20px;
+      }
+      .explanation {
+        position: absolute;
+        top: 8px;
+        left: 8px;
+        font-size: 11px;
+        background: #fff8e1;
+        padding: 4px 6px;
+        border-radius: 4px;
+        pointer-events: none;
+      }
+      .explanation b {
+        font-weight: bold;
+      }
+      .message {
+        font-size: 18px;
+        margin-top: 20px;
+        color: #f44336;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="game">
+      <h2>Card Puzzle Game</h2>
+      <div class="level-selector">
+        Level:
+        <select id="levelSelect">
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+        </select>
+        <button id="startButton">Start Game</button>
+      </div>
+      <div class="score-display">
+        Target Score: <span id="targetScore"></span> | Current Score:
+        <span id="currentScore">0</span>
+      </div>
+      <div class="grid" id="grid"></div>
+      <div id="cards"></div>
+      <div class="message" id="message"></div>
+    </div>
+    <script>
+      const allCards = [
+        // Positive effect cards
+        {
+          id: 1,
+          value: 5,
+          originalValue: 5,
+          effect: 'The card to the right is multiplied by 2',
+        },
+        {
+          id: 2,
+          value: 3,
+          originalValue: 3,
+          effect: 'The card below is increased by 2',
+        },
+        {
+          id: 3,
+          value: 4,
+          originalValue: 4,
+          effect: "This card's value is doubled if in the top row",
+        },
+        {
+          id: 4,
+          value: 2,
+          originalValue: 2,
+          effect: "This card's value is tripled if in the bottom row",
+        },
+        {
+          id: 6,
+          value: 7,
+          originalValue: 7,
+          effect: 'All other cards in same row are multiplied by 2',
+        },
+        // New positive effect cards
+        {
+          id: 13,
+          value: 5,
+          originalValue: 5,
+          effect: 'Multiplies itself by number of cards in same row',
+        },
+        {
+          id: 14,
+          value: 6,
+          originalValue: 6,
+          effect: 'If in rightmost column, increases all other cards by 3',
+        },
+        {
+          id: 15,
+          value: 3,
+          originalValue: 3,
+          effect: 'Swaps its value with the card below (if any)',
+        },
+        // Curse cards
+        {
+          id: 101,
+          value: 4,
+          originalValue: 4,
+          effect: 'All other cards decrease by 2',
+          isCurse: true,
+        },
+        {
+          id: 103,
+          value: 5,
+          originalValue: 5,
+          effect: 'Decreases the value of the card above by 3',
+          isCurse: true,
+        },
+        {
+          id: 104,
+          value: 6,
+          originalValue: 6,
+          effect: 'All other cards in same column are decreased by 1',
+          isCurse: true,
+        },
+      ];
+
+      let gridSize = 2; // Default grid size for level 1
+      let grid = [];
+      let cards = allCards.slice(); // Include all cards for reference
+      let activeCard = null;
+      let offsetX = 0;
+      let offsetY = 0;
+      let originalParent = null;
+
+      function createCard(card) {
+        const cardElement = document.createElement('div');
+        cardElement.className = 'card';
+        if (card.isCurse) {
+          cardElement.classList.add('curse-card');
+        }
+        cardElement.id = `card-${card.id}`;
+
+        const valueElement = document.createElement('div');
+        valueElement.className = 'card-value';
+        valueElement.textContent = card.originalValue;
+
+        const originalValueElement = document.createElement('div');
+        originalValueElement.className = 'original-value';
+        originalValueElement.textContent = card.originalValue;
+        originalValueElement.style.display = 'none'; // Hide initially
+
+        const effectElement = document.createElement('div');
+        effectElement.className = 'card-effect';
+        effectElement.textContent = card.effect;
+
+        valueElement.appendChild(originalValueElement);
+        cardElement.appendChild(valueElement);
+        cardElement.appendChild(effectElement);
+
+        setupDraggable(cardElement);
+
+        return cardElement;
+      }
+
+      function setupDraggable(element) {
+        element.addEventListener('mousedown', startDragging);
+        element.addEventListener('touchstart', startDragging, {
+          passive: false,
+        });
+      }
+
+      function startDragging(e) {
+        e.preventDefault();
+        const event = e.touches ? e.touches[0] : e;
+        activeCard = e.target.closest('.card');
+        if (!activeCard) return;
+
+        originalParent = activeCard.parentElement;
+
+        // Prevent cards from returning to starting area by click
+        if (originalParent.classList.contains('cell') && e.type === 'click') {
+          return;
+        }
+
+        const rect = activeCard.getBoundingClientRect();
+        offsetX = event.clientX - rect.left;
+        offsetY = event.clientY - rect.top;
+
+        activeCard.style.position = 'fixed';
+        activeCard.style.left = rect.left + 'px';
+        activeCard.style.top = rect.top + 'px';
+        activeCard.style.zIndex = '1000';
+
+        document.body.appendChild(activeCard);
+        activeCard.classList.add('dragging');
+
+        document.addEventListener('mousemove', drag);
+        document.addEventListener('touchmove', drag, { passive: false });
+        document.addEventListener('mouseup', stopDragging);
+        document.addEventListener('touchend', stopDragging);
+      }
+
+      function drag(e) {
+        if (!activeCard) return;
+        e.preventDefault();
+
+        const event = e.touches ? e.touches[0] : e;
+
+        activeCard.style.left = event.clientX - offsetX + 'px';
+        activeCard.style.top = event.clientY - offsetY + 'px';
+
+        const cells = document.querySelectorAll('.cell');
+        cells.forEach(cell => {
+          cell.classList.remove('dragover');
+          const rect = cell.getBoundingClientRect();
+          if (
+            event.clientX >= rect.left &&
+            event.clientX <= rect.right &&
+            event.clientY >= rect.top &&
+            event.clientY <= rect.bottom
+          ) {
+            const row = parseInt(cell.dataset.row);
+            const col = parseInt(cell.dataset.col);
+            if (grid[row][col] === null) {
+              cell.classList.add('dragover');
+            }
+          }
+        });
+      }
+
+      function stopDragging(e) {
+        if (!activeCard) return;
+
+        const cells = document.querySelectorAll('.cell');
+        let dropped = false;
+
+        cells.forEach(cell => {
+          const rect = cell.getBoundingClientRect();
+          const event = e.changedTouches ? e.changedTouches[0] : e;
+
+          if (
+            event.clientX >= rect.left &&
+            event.clientX <= rect.right &&
+            event.clientY >= rect.top &&
+            event.clientY <= rect.bottom
+          ) {
+            const row = parseInt(cell.dataset.row);
+            const col = parseInt(cell.dataset.col);
+
+            if (grid[row][col] === null) {
+              // Remove from old position in grid
+              if (originalParent.classList.contains('cell')) {
+                const oldRow = parseInt(originalParent.dataset.row);
+                const oldCol = parseInt(originalParent.dataset.col);
+                grid[oldRow][oldCol] = null;
+              }
+
+              cell.appendChild(activeCard);
+              activeCard.style.position = 'relative';
+              activeCard.style.left = '0';
+              activeCard.style.top = '0';
+              activeCard.style.zIndex = '1';
+              grid[row][col] = parseInt(activeCard.id.split('-')[1]);
+              dropped = true;
+
+              activeCard.classList.remove('dragging');
+
+              updateCardValues();
+              updateScore();
+            }
+          }
+        });
+
+        if (!dropped) {
+          // Return to original position
+          if (originalParent.classList.contains('cell')) {
+            // Remove from grid
+            const oldRow = parseInt(originalParent.dataset.row);
+            const oldCol = parseInt(originalParent.dataset.col);
+            grid[oldRow][oldCol] = null;
+
+            document.getElementById('cards').appendChild(activeCard);
+          } else {
+            originalParent.appendChild(activeCard);
+          }
+
+          activeCard.style.position = 'relative';
+          activeCard.style.left = '0';
+          activeCard.style.top = '0';
+          activeCard.style.zIndex = '1';
+          activeCard.classList.remove('dragging');
+
+          updateCardValues();
+          updateScore();
+        }
+
+        cells.forEach(cell => cell.classList.remove('dragover'));
+
+        document.removeEventListener('mousemove', drag);
+        document.removeEventListener('touchmove', drag);
+        document.removeEventListener('mouseup', stopDragging);
+        document.removeEventListener('touchend', stopDragging);
+
+        activeCard = null;
+
+        checkForWin();
+      }
+
+      function initializeGame() {
+        const gridElement = document.getElementById('grid');
+        const cardsElement = document.getElementById('cards');
+        document.getElementById('message').textContent = '';
+
+        // Set default level to 1 if not selected
+        let level = 1;
+        const levelSelect = document.getElementById('levelSelect');
+        if (levelSelect) {
+          level = parseInt(levelSelect.value);
+        }
+
+        // Adjust grid size based on level
+        switch (level) {
+          case 1:
+            gridSize = 2;
+            break;
+          case 2:
+            gridSize = 2;
+            break;
+          case 3:
+            gridSize = 3;
+            break;
+          case 4:
+            gridSize = 4;
+            break;
+          default:
+            gridSize = 2;
+        }
+
+        grid = [];
+        for (let i = 0; i < gridSize; i++) {
+          grid[i] = Array(gridSize).fill(null);
+        }
+
+        // Update grid style
+        gridElement.style.gridTemplateColumns = `repeat(${gridSize}, 150px)`;
+
+        // Clear existing elements
+        gridElement.innerHTML = '';
+        cardsElement.innerHTML = '';
+
+        // Create grid
+        for (let i = 0; i < gridSize; i++) {
+          for (let j = 0; j < gridSize; j++) {
+            const cell = document.createElement('div');
+            cell.className = 'cell';
+            cell.dataset.row = i;
+            cell.dataset.col = j;
+            gridElement.appendChild(cell);
+          }
+        }
+
+        // Determine number of cards based on level
+        let numberOfCards = gridSize * 2;
+        const availableCards = allCards.filter(c => !c.isCurse);
+        const curseCards = allCards.filter(c => c.isCurse);
+
+        // Randomly select cards
+        const selectedCards = [];
+        while (
+          selectedCards.length < numberOfCards &&
+          availableCards.length > 0
+        ) {
+          const randomIndex = Math.floor(Math.random() * availableCards.length);
+          selectedCards.push(availableCards.splice(randomIndex, 1)[0]);
+        }
+
+        // Add curse cards (must be played)
+        const selectedCurseCards = curseCards.slice(0, level); // Add one curse card per level
+        selectedCards.push(...selectedCurseCards);
+
+        // Initialize selected cards
+        selectedCards.forEach(card => {
+          // Initialize affectedBy array and calculation
+          card.affectedBy = [];
+          card.calculation = `<b>${card.originalValue}</b>`;
+          card.lastPrecedence = 3; // Highest precedence
+          const cardElement = createCard(card);
+          cardsElement.appendChild(cardElement);
+        });
+
+        // Set target score
+        const targetScore = level * 20;
+        document.getElementById('targetScore').textContent = targetScore;
+        document.getElementById('currentScore').textContent = '0';
+        updateScore();
+      }
+
+      function updateCardValues() {
+        // Get all card IDs in the grid
+        const cardsInGridIds = [];
+        for (let i = 0; i < gridSize; i++) {
+          for (let j = 0; j < gridSize; j++) {
+            if (grid[i][j] !== null) {
+              cardsInGridIds.push(grid[i][j]);
+            }
+          }
+        }
+
+        // Reset all cards in the grid
+        cards.forEach(card => {
+          if (cardsInGridIds.includes(card.id)) {
+            card.value = card.originalValue;
+            card.calculation = `<b>${card.originalValue}</b>`;
+            card.affectedBy = [];
+            card.lastPrecedence = 3; // Reset precedence
+          }
+        });
+
+        // Clear previous explanations for cards in grid
+        cardsInGridIds.forEach(cardId => {
+          const cardElement = document.getElementById(`card-${cardId}`);
+          if (cardElement) {
+            const explanationElement =
+              cardElement.querySelector('.explanation');
+            if (explanationElement) {
+              explanationElement.remove();
+            }
+            const valueElement = cardElement.querySelector('.card-value');
+            valueElement.className = 'card-value';
+          }
+        });
+
+        // Apply effects
+        let changes = true;
+        while (changes) {
+          changes = false;
+
+          for (let i = 0; i < gridSize; i++) {
+            for (let j = 0; j < gridSize; j++) {
+              const cardId = grid[i][j];
+              if (cardId !== null) {
+                const card = cards.find(c => c.id === cardId);
+
+                // Apply effects based on position
+                if (
+                  cardId === 1 &&
+                  j < gridSize - 1 &&
+                  grid[i][j + 1] !== null
+                ) {
+                  const rightCardId = grid[i][j + 1];
+                  const rightCard = cards.find(c => c.id === rightCardId);
+                  if (!rightCard.affectedBy.includes(cardId)) {
+                    rightCard.affectedBy.push(cardId);
+                    // Multiplication has precedence 2
+                    if (rightCard.lastPrecedence < 2) {
+                      rightCard.calculation = `(${rightCard.calculation}) × 2`;
+                    } else {
+                      rightCard.calculation = `${rightCard.calculation} × 2`;
+                    }
+                    rightCard.value *= 2;
+                    rightCard.lastPrecedence = 2;
+                    changes = true;
+                  }
+                }
+                if (
+                  cardId === 2 &&
+                  i < gridSize - 1 &&
+                  grid[i + 1][j] !== null
+                ) {
+                  const belowCardId = grid[i + 1][j];
+                  const belowCard = cards.find(c => c.id === belowCardId);
+                  if (!belowCard.affectedBy.includes(cardId)) {
+                    belowCard.affectedBy.push(cardId);
+                    // Addition has precedence 1
+                    if (belowCard.lastPrecedence < 1) {
+                      belowCard.calculation = `(${belowCard.calculation}) + 2`;
+                    } else {
+                      belowCard.calculation = `${belowCard.calculation} + 2`;
+                    }
+                    belowCard.value += 2;
+                    belowCard.lastPrecedence = 1;
+                    changes = true;
+                  }
+                }
+                if (cardId === 3 && i === 0) {
+                  if (!card.affectedBy.includes('self-doubled')) {
+                    card.affectedBy.push('self-doubled');
+                    // Multiplication has precedence 2
+                    if (card.lastPrecedence < 2) {
+                      card.calculation = `(${card.calculation}) × 2`;
+                    } else {
+                      card.calculation = `${card.calculation} × 2`;
+                    }
+                    card.value *= 2;
+                    card.lastPrecedence = 2;
+                    changes = true;
+                  }
+                }
+                if (cardId === 4 && i === gridSize - 1) {
+                  if (!card.affectedBy.includes('self-tripled')) {
+                    card.affectedBy.push('self-tripled');
+                    // Multiplication has precedence 2
+                    if (card.lastPrecedence < 2) {
+                      card.calculation = `(${card.calculation}) × 3`;
+                    } else {
+                      card.calculation = `${card.calculation} × 3`;
+                    }
+                    card.value *= 3;
+                    card.lastPrecedence = 2;
+                    changes = true;
+                  }
+                }
+                if (cardId === 6) {
+                  for (let col = 0; col < gridSize; col++) {
+                    const rowCardId = grid[i][col];
+                    if (rowCardId !== null && rowCardId !== cardId) {
+                      const rowCard = cards.find(c => c.id === rowCardId);
+                      if (!rowCard.affectedBy.includes(cardId)) {
+                        rowCard.affectedBy.push(cardId);
+                        // Multiplication has precedence 2
+                        if (rowCard.lastPrecedence < 2) {
+                          rowCard.calculation = `(${rowCard.calculation}) × 2`;
+                        } else {
+                          rowCard.calculation = `${rowCard.calculation} × 2`;
+                        }
+                        rowCard.value *= 2;
+                        rowCard.lastPrecedence = 2;
+                        changes = true;
+                      }
+                    }
+                  }
+                }
+                if (cardId === 13) {
+                  if (!card.affectedBy.includes('row-multiplier')) {
+                    card.affectedBy.push('row-multiplier');
+                    let count = 0;
+                    for (let col = 0; col < gridSize; col++) {
+                      if (grid[i][col] !== null) {
+                        count++;
+                      }
+                    }
+                    card.calculation = `${card.calculation} × ${count}`;
+                    card.value *= count;
+                    card.lastPrecedence = 2;
+                    changes = true;
+                  }
+                }
+                if (cardId === 14 && j === gridSize - 1) {
+                  if (!card.affectedBy.includes('increase-others')) {
+                    card.affectedBy.push('increase-others');
+                    cardsInGridIds.forEach(id => {
+                      if (id !== cardId) {
+                        const otherCard = cards.find(c => c.id === id);
+                        if (!otherCard.affectedBy.includes(cardId)) {
+                          otherCard.affectedBy.push(cardId);
+                          // Addition has precedence 1
+                          if (otherCard.lastPrecedence < 1) {
+                            otherCard.calculation = `(${otherCard.calculation}) + 3`;
+                          } else {
+                            otherCard.calculation = `${otherCard.calculation} + 3`;
+                          }
+                          otherCard.value += 3;
+                          otherCard.lastPrecedence = 1;
+                          changes = true;
+                        }
+                      }
+                    });
+                  }
+                }
+                if (
+                  cardId === 15 &&
+                  i < gridSize - 1 &&
+                  grid[i + 1][j] !== null
+                ) {
+                  const belowCardId = grid[i + 1][j];
+                  const belowCard = cards.find(c => c.id === belowCardId);
+                  if (!card.affectedBy.includes('swap-with-below')) {
+                    card.affectedBy.push('swap-with-below');
+                    // Swap values and calculations
+                    const tempValue = card.value;
+                    const tempCalculation = card.calculation;
+                    card.value = belowCard.value;
+                    card.calculation = belowCard.calculation;
+                    belowCard.value = tempValue;
+                    belowCard.calculation = tempCalculation;
+                    changes = true;
+                  }
+                }
+                // Curse cards effects
+                if (
+                  card.isCurse &&
+                  !card.affectedBy.includes('curse-applied')
+                ) {
+                  card.affectedBy.push('curse-applied');
+                  applyCurseEffect(card, i, j, cardsInGridIds);
+                  changes = true;
+                }
+              }
+            }
+          }
+        }
+
+        // Update value display and explanations for cards in grid
+        cardsInGridIds.forEach(cardId => {
+          const card = cards.find(c => c.id === cardId);
+          const cardElement = document.getElementById(`card-${card.id}`);
+          const valueElement = cardElement.querySelector('.card-value');
+          const originalValueElement =
+            cardElement.querySelector('.original-value');
+
+          valueElement.textContent = card.value;
+
+          if (originalValueElement) {
+            if (card.value !== card.originalValue) {
+              // Only show original value crossed out if different
+              originalValueElement.style.display = 'inline';
+              valueElement.appendChild(originalValueElement);
+            } else {
+              originalValueElement.style.display = 'none';
+            }
+          }
+
+          if (card.calculation !== `<b>${card.originalValue}</b>`) {
+            valueElement.classList.add(
+              card.value >= card.originalValue
+                ? 'value-increased'
+                : 'value-decreased'
+            );
+            addExplanation(card.id, `${card.calculation} = ${card.value}`);
+          }
+
+          card.affectedBy = [];
+        });
+      }
+
+      function applyCurseEffect(curseCard, i, j, cardsInGridIds) {
+        if (curseCard.id === 101) {
+          // All other cards in grid decrease by 2
+          cardsInGridIds.forEach(id => {
+            if (id !== curseCard.id) {
+              const card = cards.find(c => c.id === id);
+              if (!card.affectedBy.includes(curseCard.id)) {
+                card.affectedBy.push(curseCard.id);
+                // Subtraction has precedence 1
+                if (card.lastPrecedence < 1) {
+                  card.calculation = `(${card.calculation}) - 2`;
+                } else {
+                  card.calculation = `${card.calculation} - 2`;
+                }
+                card.value -= 2;
+                card.lastPrecedence = 1;
+              }
+            }
+          });
+        }
+        if (curseCard.id === 103 && i > 0 && grid[i - 1][j] !== null) {
+          // Decreases the value of the card above by 3
+          const aboveCardId = grid[i - 1][j];
+          const aboveCard = cards.find(c => c.id === aboveCardId);
+          if (!aboveCard.affectedBy.includes(curseCard.id)) {
+            aboveCard.affectedBy.push(curseCard.id);
+            // Subtraction has precedence 1
+            if (aboveCard.lastPrecedence < 1) {
+              aboveCard.calculation = `(${aboveCard.calculation}) - 3`;
+            } else {
+              aboveCard.calculation = `${aboveCard.calculation} - 3`;
+            }
+            aboveCard.value -= 3;
+            aboveCard.lastPrecedence = 1;
+          }
+        }
+        if (curseCard.id === 104) {
+          // All other cards in same column are decreased by 1
+          for (let row = 0; row < gridSize; row++) {
+            const colCardId = grid[row][j];
+            if (colCardId !== null && colCardId !== curseCard.id) {
+              const colCard = cards.find(c => c.id === colCardId);
+              if (!colCard.affectedBy.includes(curseCard.id)) {
+                colCard.affectedBy.push(curseCard.id);
+                // Subtraction has precedence 1
+                if (colCard.lastPrecedence < 1) {
+                  colCard.calculation = `(${colCard.calculation}) - 1`;
+                } else {
+                  colCard.calculation = `${colCard.calculation} - 1`;
+                }
+                colCard.value -= 1;
+                colCard.lastPrecedence = 1;
+              }
+            }
+          }
+        }
+      }
+
+      function addExplanation(cardId, text) {
+        const cardElement = document.getElementById(`card-${cardId}`);
+        let explanationElement = cardElement.querySelector('.explanation');
+        if (!explanationElement) {
+          explanationElement = document.createElement('div');
+          explanationElement.className = 'explanation';
+          cardElement.appendChild(explanationElement);
+        }
+        explanationElement.innerHTML = text;
+      }
+
+      function getAdjacentPositions(row, col) {
+        const positions = [];
+        // Function left empty since adjacent effects are removed
+        return positions;
+      }
+
+      function calculateScore() {
+        let score = 0;
+        for (let i = 0; i < gridSize; i++) {
+          for (let j = 0; j < gridSize; j++) {
+            const cardId = grid[i][j];
+            if (cardId !== null) {
+              const card = cards.find(c => c.id === cardId);
+              score += card.value;
+            }
+          }
+        }
+        return score;
+      }
+
+      function updateScore() {
+        const score = calculateScore();
+        const currentScoreElement = document.getElementById('currentScore');
+        currentScoreElement.textContent = score;
+
+        const targetScore = parseInt(
+          document.getElementById('targetScore').textContent
+        );
+        currentScoreElement.style.color =
+          score > targetScore
+            ? '#4CAF50'
+            : score === targetScore
+            ? 'black'
+            : '#f44336';
+      }
+
+      function checkForWin() {
+        const curseCardsInPlay = allCards.filter(
+          c => c.isCurse && isCardInGrid(c.id)
+        );
+        const allCurseCardsPlaced =
+          curseCardsInPlay.length === allCards.filter(c => c.isCurse).length;
+
+        if (allCurseCardsPlaced) {
+          document.getElementById('message').textContent = '';
+        } else {
+          document.getElementById('message').textContent =
+            'Place all curse cards to complete the level!';
+        }
+      }
+
+      function isCardInGrid(cardId) {
+        for (let i = 0; i < gridSize; i++) {
+          for (let j = 0; j < gridSize; j++) {
+            if (grid[i][j] === cardId) return true;
+          }
+        }
+        return false;
+      }
+
+      document.addEventListener('DOMContentLoaded', () => {
+        // Remove auto-initialization
+        document
+          .getElementById('startButton')
+          .addEventListener('click', initializeGame);
+      });
+    </script>
+  </body>
+</html>
